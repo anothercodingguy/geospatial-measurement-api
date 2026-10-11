@@ -1,10 +1,12 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.db import get_session
 from app.models import Feature, FileStatus, MeasurementStatus, UploadedFile
 from app.schemas import (
@@ -50,8 +52,9 @@ async def upload_file(request: Request, session: SessionDep, file: Annotated[Upl
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Uploaded file is empty.")
 
-    record = process_upload(session, settings, filename, data)
-    info = _file_info(session, record)
+    # Parsing, reprojection and DB writes are blocking (CPU + I/O). Running them in the
+    # threadpool keeps the event loop free to serve other requests meanwhile.
+    record, info = await run_in_threadpool(_process, session, settings, filename, data)
     if record.status == FileStatus.FAILED:
         return JSONResponse(status_code=422, content=info.model_dump(mode="json"))
     return info
@@ -63,8 +66,13 @@ def list_files(session: SessionDep, limit: Limit = 50, offset: Offset = 0):
     rows = session.scalars(
         select(UploadedFile).order_by(UploadedFile.created_at.desc()).limit(limit).offset(offset)
     ).all()
+    # One grouped query for the whole page instead of one query per file.
+    counts = _geometry_type_counts(session, [r.id for r in rows])
     return FileList(
-        count=total, limit=limit, offset=offset, results=[_file_info(session, r) for r in rows]
+        count=total,
+        limit=limit,
+        offset=offset,
+        results=[_file_info(session, r, counts.get(r.id, {})) for r in rows],
     )
 
 
@@ -163,14 +171,34 @@ def _features(session: Session, file_id: str, limit: int, offset: int) -> list[F
     ).all()
 
 
-def _file_info(session: Session, record: UploadedFile) -> FileInfo:
-    counts = session.execute(
-        select(Feature.geometry_type, func.count())
-        .where(Feature.file_id == record.id)
-        .group_by(Feature.geometry_type)
+def _process(
+    session: Session, settings: Settings, filename: str, data: bytes
+) -> tuple[UploadedFile, FileInfo]:
+    record = process_upload(session, settings, filename, data)
+    return record, _file_info(session, record)
+
+
+def _geometry_type_counts(session: Session, file_ids: list[str]) -> dict[str, dict[str, int]]:
+    if not file_ids:
+        return {}
+    rows = session.execute(
+        select(Feature.file_id, Feature.geometry_type, func.count())
+        .where(Feature.file_id.in_(file_ids))
+        .group_by(Feature.file_id, Feature.geometry_type)
     ).all()
+    counts: dict[str, dict[str, int]] = {}
+    for file_id, geometry_type, n in rows:
+        counts.setdefault(file_id, {})[geometry_type or "None"] = n
+    return counts
+
+
+def _file_info(
+    session: Session, record: UploadedFile, geometry_types: dict[str, int] | None = None
+) -> FileInfo:
     info = FileInfo.model_validate(record)
-    info.geometry_types = {(t or "None"): n for t, n in counts}
+    if geometry_types is None:
+        geometry_types = _geometry_type_counts(session, [record.id]).get(record.id, {})
+    info.geometry_types = geometry_types
     return info
 
 

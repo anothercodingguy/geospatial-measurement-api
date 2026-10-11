@@ -329,8 +329,11 @@ Writing the KML parser by hand also let me control namespace handling, `MultiGeo
 and `ExtendedData`. The trade-off is fewer formats. GeoPandas would be the right call if the
 service had to accept many formats (see Future scope).
 
-**Synchronous processing.** Uploads are processed within the request, which keeps the API and
-the tests simple and is fast for typical survey files (the samples take ~20 ms). The
+**Synchronous processing (off the event loop).** Uploads are processed within the request, which
+keeps the API and the tests simple and is fast for typical survey files (the samples take
+~20 ms). Parsing and DB writes are blocking work, so the async endpoint runs them in FastAPI's
+threadpool. Without that, a 20,000-feature upload (~9 s) made a concurrent `GET /health` wait
+7.7 s; with it, `/health` answers in ~2 ms. The
 data model already has a `PROCESSING` status. Moving to a background worker would mean
 returning `202` from the upload, letting a worker set `COMPLETED`/`FAILED`, and having clients
 poll `GET /api/files/{id}/`. The API contract would not change.

@@ -54,10 +54,11 @@ def test_kml_upload_returns_file_info(upload, client):
 
 def test_list_files(upload, client):
     upload("a.kml", kml_document(kml_point("p", 1, 1)))
-    upload("b.kml", kml_document(kml_point("p", 2, 2)))
+    upload("b.kml", kml_document(kml_polygon("q", BLR_SQUARE), kml_line("r", BLR_LINE)))
     body = client.get("/api/files/").json()
     assert body["count"] == 2
-    assert {f["filename"] for f in body["results"]} == {"a.kml", "b.kml"}
+    by_name = {f["filename"]: f["geometry_types"] for f in body["results"]}
+    assert by_name == {"a.kml": {"Point": 1}, "b.kml": {"Polygon": 1, "LineString": 1}}
 
 
 def test_features_endpoint_exposes_geometry_crs_and_properties(upload, client):
