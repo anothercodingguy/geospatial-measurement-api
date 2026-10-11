@@ -1,0 +1,35 @@
+[project]
+name = "geo-measure-api"
+version = "0.1.0"
+description = "FastAPI service that measures features in Shapefile and KML uploads"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "defusedxml>=0.7.1",
+    "fastapi>=0.143.0",
+    "pydantic-settings>=2.15.0",
+    "pyproj>=3.8.0",
+    "pyshp>=3.1.6",
+    "python-multipart>=0.0.32",
+    "shapely>=2.2.0",
+    "sqlalchemy>=2.1.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
